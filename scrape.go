@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	searchUrl = `http://store.steampowered.com/search/?sort_by=Released_DESC&vrsupport=101&page=%d`
+	searchUrl  = `http://store.steampowered.com/search/?sort_by=Released_DESC&vrsupport=101&page=%d`
 	appInfoUrl = `http://store.steampowered.com/api/appdetails?appids=%d`
 )
 
@@ -34,7 +34,7 @@ func NewScraper(db *GamesDb) *Scraper {
 	}
 }
 
-func (s *Scraper) getAppIds(ids chan <- int64) {
+func (s *Scraper) getAppIds(ids chan<- int64) {
 	defer func() {
 		ids <- -1
 	}()
@@ -82,7 +82,7 @@ func (s *Scraper) saveAppInfo(id int64, continueOnDuplicate bool) {
 	appInfoById := AppInfoById{}
 	err = s.client.fetchJson(url, &appInfoById)
 	if err != nil {
-		s.Cancel(fmt.Errorf("error parsing json: %v", err))
+		log.Printf("error parsing json at %s: %v", url, err)
 		return
 	}
 	if appInfoById == nil {

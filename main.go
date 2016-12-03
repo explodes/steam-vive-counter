@@ -4,13 +4,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/explodes/ezconfig"
-	"github.com/explodes/ezconfig/db"
-	"github.com/explodes/jsonserv"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/explodes/ezconfig"
+	"github.com/explodes/ezconfig/db"
+	"github.com/explodes/jsonserv"
 )
 
 const (
@@ -89,10 +90,14 @@ type serverContext struct {
 	games []gameJson
 }
 
+func ticker(minutes int) *time.Ticker {
+	return time.NewTicker(time.Duration(minutes) * time.Minute)
+}
+
 func runGamesServer(db *GamesDb) {
 
-	update := time.Tick(time.Duration(*serveUpdatePeriod) * time.Minute)
-	games := time.Tick(time.Duration(*serveGamesPeriod) * time.Minute)
+	update := ticker(*serveUpdatePeriod)
+	games := ticker(*serveGamesPeriod)
 
 	ctx := &serverContext{
 		games: make([]gameJson, 0),
@@ -101,16 +106,24 @@ func runGamesServer(db *GamesDb) {
 	updateServerGamesList(db, ctx)
 
 	go func() {
+		defer update.Stop()
+		defer games.Stop()
 		scraper := NewScraper(db)
 		updater := NewUpdater(db)
+		updateTheGames := func() {
+			log.Print("updating")
+			if err := updater.Update(time.Duration(*serveUpdatePeriod)); err != nil {
+				log.Printf("error updating: %v", err)
+			}
+		}
+		updateTheGames()
 		for {
 			select {
-			case <-update:
-				if err := updater.Update(time.Duration(*serveUpdatePeriod)); err != nil {
-					log.Printf("error updating: %v", err)
-				}
-			case <-games:
-				if err := scraper.Scrape(false); err != nil {
+			case <-update.C:
+				updateTheGames()
+			case <-games.C:
+				log.Print("scraping games")
+				if err := scraper.Scrape(true); err != nil {
 					log.Printf("error updating: %v", err)
 				}
 				if err := updateServerGamesList(db, ctx); err != nil {
