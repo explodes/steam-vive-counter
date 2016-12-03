@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/explodes/ezconfig/db"
@@ -12,7 +11,7 @@ import (
 
 const (
 	sqlCreateGamesTable = `CREATE TABLE IF NOT EXISTS games (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	id BIGSERIAL PRIMARY KEY,
 	app_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	singleplayer INTEGER DEFAULT 0 NOT NULL,
@@ -22,11 +21,11 @@ const (
 	last_update INTEGER DEFAULT 0 NOT NULL,
 	players INTEGER DEFAULT 0 NOT NULL
 )`
-	sqlGameInsert        = `INSERT INTO GAMES (app_id, name, singleplayer, multiplayer, online_multiplayer, local_multiplayer) VALUES (?, ?, ?, ?, ?, ?)`
-	sqlGameExists        = `SELECT COUNT(id) FROM games WHERE app_id = ?`
-	sqlGameUpdatePlayers = `UPDATE games SET players = ?, last_update = ? WHERE app_id = ?`
-	sqlGamesUnUpdated    = `SELECT app_id FROM games WHERE last_update < ?`
-	sqlTopGames          = `SELECT id, app_id, name, singleplayer, multiplayer, online_multiplayer, local_multiplayer, last_update, players FROM games ORDER BY players DESC, name ASC LIMIT ?`
+	sqlGameInsert        = `INSERT INTO GAMES (app_id, name, singleplayer, multiplayer, online_multiplayer, local_multiplayer) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ID`
+	sqlGameExists        = `SELECT COUNT(id) FROM games WHERE app_id = $1`
+	sqlGameUpdatePlayers = `UPDATE games SET players = $1, last_update = $2 WHERE app_id = $3`
+	sqlGamesUnUpdated    = `SELECT app_id FROM games WHERE last_update < $1`
+	sqlTopGames          = `SELECT id, app_id, name, singleplayer, multiplayer, online_multiplayer, local_multiplayer, last_update, players FROM games ORDER BY players DESC, name ASC LIMIT $1`
 )
 
 type Game struct {
@@ -41,9 +40,104 @@ type Game struct {
 	Players           int
 }
 
+type GamesDb struct {
+	db *sql.DB
+}
+
 type GamesIter struct {
 	game Game
 	rows *sql.Rows
+}
+
+func connectDb(conf *db.DbConfig) (*sql.DB, error) {
+	conn, err := opener.New().WithDatabase(conf).Connect()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to connect to database: %v", err)
+	}
+	if conn.DB == nil {
+		return nil, fmt.Errorf("Unexpected nil database: %v", err)
+	}
+	return conn.DB, nil
+}
+
+func migrateDb(db *sql.DB, create string) error {
+	if _, err := db.Exec(create); err != nil {
+		return fmt.Errorf("Unable to migrate database: %v", err)
+	}
+	return nil
+}
+
+func NewGamesDb(config *db.DbConfig) (*GamesDb, error) {
+	if config.Database.Type != "postgres" {
+		return nil, fmt.Errorf("database not supported: %s", config.Database.Type)
+	}
+	conn, err := connectDb(config)
+	if err != nil {
+		return nil, err
+	}
+	if err = migrateDb(conn, sqlCreateGamesTable); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	gamesDb := &GamesDb{
+		db: conn,
+	}
+	return gamesDb, nil
+}
+
+func (g *GamesDb) Close() {
+	g.db.Close()
+}
+
+func (g *GamesDb) Exists(id int64) (bool, error) {
+	var count int
+	if err := g.db.QueryRow(sqlGameExists, id).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (g *GamesDb) SaveAppInfo(appId int64, name string, singleplayer, multiplayer, onlineMultiplayer, localMultiplayer bool) (int64, error) {
+	var id int64
+	if err := g.db.QueryRow(sqlGameInsert, appId, name, b2i(singleplayer), b2i(multiplayer), b2i(onlineMultiplayer), b2i(localMultiplayer)).Scan(&id); err != nil {
+		return -1, err
+	}
+	return id, nil
+}
+
+func (g *GamesDb) GetUnUpdatedAppIds(since time.Time) ([]int64, error) {
+	timestamp := t2i(since)
+	rows, err := g.db.Query(sqlGamesUnUpdated, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	appIds := make([]int64, 0)
+	for rows.Next() {
+		var appId int64
+		if err := rows.Scan(&appId); err != nil {
+			return nil, err
+		}
+		appIds = append(appIds, appId)
+	}
+	return appIds, nil
+}
+
+func (g *GamesDb) UpdatePlayersCount(id int64, players int) error {
+	timestamp := t2i(time.Now())
+	_, err := g.db.Exec(sqlGameUpdatePlayers, players, timestamp, id)
+	return err
+}
+
+func (g *GamesDb) GetTopGames(limit int) (*GamesIter, error) {
+	rows, err := g.db.Query(sqlTopGames, limit)
+	if err != nil {
+		return nil, err
+	}
+	iter := &GamesIter{
+		rows: rows,
+	}
+	return iter, nil
 }
 
 func (g *GamesIter) Next() bool {
@@ -63,116 +157,4 @@ func (g *GamesIter) Game() (*Game, error) {
 
 func (g *GamesIter) Close() error {
 	return g.rows.Close()
-}
-
-func prepareDbConfig(file string) *db.DbConfig {
-	return &db.DbConfig{
-		Database: db.Host{
-			Type:   "sqlite3",
-			Host:   file,
-			DbName: "steam",
-		},
-	}
-}
-
-func connectDb(conf *db.DbConfig) (*sql.DB, error) {
-	conn, err := opener.New().WithDatabase(conf).Connect()
-	if err != nil {
-		return nil, fmt.Errorf("Unable to connect to database: %v", err)
-	}
-	if conn.DB == nil {
-		return nil, fmt.Errorf("Unexpected nil database: %v", err)
-	}
-	return conn.DB, nil
-}
-
-func migrateDb(db *sql.DB) error {
-	if _, err := db.Exec(sqlCreateGamesTable); err != nil {
-		return fmt.Errorf("Unable to migrate database: %v", err)
-	}
-	return nil
-}
-
-type GamesDb struct {
-	sync.Mutex
-	db *sql.DB
-}
-
-func NewGamesDb(file string) (*GamesDb, error) {
-	dbConf := prepareDbConfig(file)
-	conn, err := connectDb(dbConf)
-	if err != nil {
-		return nil, err
-	}
-	if err = migrateDb(conn); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	gamesDb := &GamesDb{
-		db: conn,
-	}
-	return gamesDb, nil
-}
-
-func (g *GamesDb) Close() {
-	g.db.Close()
-}
-
-func (g *GamesDb) Exists(id int64) (bool, error) {
-	g.Lock()
-	defer g.Unlock()
-	var count int
-	if err := g.db.QueryRow(sqlGameExists, id).Scan(&count); err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func (g *GamesDb) SaveAppInfo(appId int64, name string, singleplayer, multiplayer, onlineMultiplayer, localMultiplayer bool) (int64, error) {
-	g.Lock()
-	defer g.Unlock()
-	result, err := g.db.Exec(sqlGameInsert, appId, name, b2i(singleplayer), b2i(multiplayer), b2i(onlineMultiplayer), b2i(localMultiplayer))
-	if err != nil {
-		return -1, err
-	}
-	return result.LastInsertId()
-}
-
-func (g *GamesDb) GetUnUpdatedAppIds(since time.Time) ([]int64, error) {
-	g.Lock()
-	defer g.Unlock()
-	timestamp := t2i(since)
-	rows, err := g.db.Query(sqlGamesUnUpdated, timestamp)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	appIds := make([]int64, 0)
-	for rows.Next() {
-		var appId int64
-		if err := rows.Scan(&appId); err != nil {
-			return nil, err
-		}
-		appIds = append(appIds, appId)
-	}
-	return appIds, nil
-}
-
-func (g *GamesDb) UpdatePlayersCount(id int64, players int) error {
-	g.Lock()
-	defer g.Unlock()
-	timestamp := t2i(time.Now())
-	_, err := g.db.Exec(sqlGameUpdatePlayers, players, timestamp, id)
-	return err
-}
-
-func (g *GamesDb) GetTopGames(limit int) (*GamesIter, error) {
-	rows, err := g.db.Query(sqlTopGames, limit)
-	if err != nil {
-		return nil, err
-	}
-	iter := &GamesIter{
-		rows: rows,
-	}
-	return iter, nil
 }

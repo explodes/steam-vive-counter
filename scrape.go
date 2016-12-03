@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	searchUrl  = `http://store.steampowered.com/search/?sort_by=Released_DESC&vrsupport=101&page=%d`
+	searchUrl = `http://store.steampowered.com/search/?sort_by=Released_DESC&vrsupport=101&page=%d`
 	appInfoUrl = `http://store.steampowered.com/api/appdetails?appids=%d`
 )
 
@@ -34,7 +34,7 @@ func NewScraper(db *GamesDb) *Scraper {
 	}
 }
 
-func (s *Scraper) getAppIds(ids chan<- int64) {
+func (s *Scraper) getAppIds(ids chan <- int64) {
 	defer func() {
 		ids <- -1
 	}()

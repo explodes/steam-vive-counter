@@ -1,14 +1,20 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"github.com/explodes/ezconfig"
+	"github.com/explodes/ezconfig/db"
 	"github.com/explodes/jsonserv"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
+)
+
+const (
+	maxJsonGames = 10000
 )
 
 var (
@@ -16,7 +22,7 @@ var (
 	fullScrapeGames = flag.Bool("fullscrape", false, "Scrape and do not stop on duplicates")
 	updateGames     = flag.Int("update", -1, "Update the list of games not updated within the last N minutes")
 	listGames       = flag.Int("list", 0, "List top N games")
-	dbPath          = flag.String("database", "", "Database location (default $HOME/.config/steamdb/steam.db)")
+	config          = flag.String("config", "", "Database configuration file")
 )
 
 var (
@@ -26,15 +32,15 @@ var (
 	serveAddr         = flag.String("port", ":9654", "Server bind address")
 )
 
-func getDatabaseFile() string {
-	if *dbPath != "" {
-		return *dbPath
+func getDatabaseConfig() *db.DbConfig {
+	if *config == "" {
+		panic(errors.New("Config file not specified"))
 	}
-	dir := filepath.Join(os.Getenv("HOME"), ".config", "steamdb")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		panic(fmt.Errorf("Unable to make database directory: %v", err))
+	conf := &db.DbConfig{}
+	if err := ezconfig.ReadConfig(*config, conf); err != nil {
+		panic(err)
 	}
-	return filepath.Join(dir, "steam.db")
+	return conf
 }
 
 func main() {
@@ -44,7 +50,7 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	gamesDb, err := NewGamesDb(getDatabaseFile())
+	gamesDb, err := NewGamesDb(getDatabaseConfig())
 	if err != nil {
 		panic(fmt.Errorf("error connecting to games database: %v", err))
 	}
@@ -132,7 +138,7 @@ func runGamesServer(db *GamesDb) {
 func updateServerGamesList(db *GamesDb, ctx *serverContext) error {
 	results := make([]gameJson, 0)
 
-	iter, err := db.GetTopGames(1000)
+	iter, err := db.GetTopGames(maxJsonGames)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultClientTimeout = 10 * time.Second
+	defaultClientTimeout = 20 * time.Second
 )
 
 type Client struct {
