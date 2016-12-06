@@ -28,7 +28,7 @@ var (
 	serve             = flag.Bool("serve", false, "Run as a web service")
 	serveUpdatePeriod = flag.Int("update-period", 5, "Update stats every N minutes")
 	serveGamesPeriod  = flag.Int("games-period", 60, "Update games every N minutes")
-	serveAddr         = flag.String("port", ":9654", "Server bind address")
+	serveAddr         = flag.String("port", ":9654", "Server bind port")
 )
 
 func getDatabaseConfig() *ezconfig.DbConfig {
