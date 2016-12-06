@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/explodes/ezconfig/db"
+	"github.com/explodes/ezconfig"
 	"github.com/explodes/ezconfig/opener"
 )
 
@@ -49,7 +49,7 @@ type GamesIter struct {
 	rows *sql.Rows
 }
 
-func connectDb(conf *db.DbConfig) (*sql.DB, error) {
+func connectDb(conf *ezconfig.DbConfig) (*sql.DB, error) {
 	conn, err := opener.New().WithDatabase(conf).Connect()
 	if err != nil {
 		return nil, fmt.Errorf("Unable to connect to database: %v", err)
@@ -67,7 +67,7 @@ func migrateDb(db *sql.DB, create string) error {
 	return nil
 }
 
-func NewGamesDb(config *db.DbConfig) (*GamesDb, error) {
+func NewGamesDb(config *ezconfig.DbConfig) (*GamesDb, error) {
 	if config.Database.Type != "postgres" {
 		return nil, fmt.Errorf("database not supported: %s", config.Database.Type)
 	}
